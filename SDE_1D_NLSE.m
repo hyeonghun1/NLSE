@@ -1,0 +1,772 @@
+clc; clear;
+
+%% Parameters
+L   = 2*sqrt(2)*pi;    % domain length
+N   = 64;              % number of spatial points
+dx  = L/N;             
+x   = linspace(-L/2, L/2-dx, N)';  % periodic grid
+T   = 10;              % final time
+dt  = 0.001;           % time step
+Nt  = round(T/dt);
+t   = 0:dt:T;
+gam = 2;               % nonlinearity
+sigma = 0.1;           % noise amplitude
+
+% Initial condition
+p0 = 0.5*(1 + 0.01*cos(2*pi*x/L));
+q0 = zeros(N,1);
+
+% Preallocate solution
+P = zeros(N, Nt+1);
+P(:,1) = p0;
+Q = zeros(N, Nt+1);
+Q(:,1) = q0;
+
+% Laplacian operator (periodic)
+e = ones(N,1);
+Dxx = spdiags([e -2*e e], -1:1, N, N)/dx^2;
+Dxx(1,N) = 1/dx^2; Dxx(N,1) = 1/dx^2;  % periodic BC
+
+%% Explicit time stepping (Euler-Maruyama)
+
+rng('default');  % for reproducibility
+p = p0;
+q = q0;
+for n = 1:Nt
+    % Laplacians
+    Lp = Dxx*p;
+    Lq = Dxx*q;
+    
+    % Nonlinear terms
+    pmq = p.^2 + q.^2;
+    
+    % Generate additive noise
+    dW1 = sqrt(dt)*randn(N,1);
+    dW2 = sqrt(dt)*randn(N,1);
+    
+    % Explicit Euler-Maruyama update
+    p = p - dt*(Lq + gam*pmq.*q) + sigma*dW1;
+    q = q + dt*(Lp + gam*pmq.*p) + sigma*dW2;
+    
+    % Store
+    P(:,n+1) = p;
+    Q(:,n+1) = q;
+end
+
+% Compute |psi|^2
+Psi2 = P.^2 + Q.^2;
+
+% Plot
+figure;
+surf(x', t', Psi2', 'LineStyle', 'none');
+title({'1D stochastic NLSE with additive noise', ...
+       '(explicit Euler-Maruyama)'}, 'FontSize', 18);
+xlabel('$x$', Interpreter='latex', FontSize=20);
+ylabel('$t$', Interpreter='latex', FontSize=20);
+zlabel('$|\psi|^2$', Interpreter='latex', FontSize=20);
+colormap jet;
+% shading interp;     % smooth surface
+colorbarHandle = colorbar;
+ylabel(colorbarHandle, '$|\psi|^2$', 'Interpreter','latex', 'FontSize',18);
+
+%% Implicit (Crank-Nicolson) + Newton's method
+
+T       = 100;           % final time
+L       = 2*sqrt(2)*pi;  % domian length
+dx      = L/64;          % mesh width
+dt      = 0.005;         % time step
+x_grid  = -L/2:dx:L/2;   % grid points
+t       = 0:dt:T;        % time points
+Nt      = T/dt;
+gam     = 2;
+
+X = zeros(2*N, Nt);
+
+% Initial conditions
+psi0 = init(x_grid, N, L);
+psi = psi0;
+
+% IC snapshot
+X(:,1) = psi;
+
+sigma = 0.01; % noise amplitude
+
+for i = 1:Nt
+    % Initial guess for Newton
+    psi_next = psi;
+
+    % Sample additive noise (complex)
+    xi = randn(2*N, 1); % independent for p and q parts
+    noise = sigma * sqrt(dt) * xi;
+
+    % Newton iteration
+    ci = 0;
+    err = 1;
+    
+    while err > 1e-13
+        % [fvec, J] = NLSE_solve(psi_next, psi, dx, dt, gam, N);
+        [fvec, J] = NLSE_solve_BC(psi_next, psi, dx, dt, gam, N, 'periodic');
+        
+        % Include noise to residual (only to fvec)
+        fvec = fvec - noise;
+        
+        % Update Newton
+        psi_next = psi_next - (J \ fvec);
+        ci = ci + 1;
+        err = norm(fvec);
+        if ci == 10
+            err
+            err = 0.5e-14;
+        end
+    end
+
+    % Store solution
+    X(:,i+1) = psi_next;
+    psi = psi_next;
+end
+
+% %
+P   = X(1:N, :);         % p snapshots
+Q   = X(N+1:end, :);     % q snapshots
+Psi = abs(P + Q*1j);     % |psi| snapshots
+% 
+
+% % Plotting the solution and energy
+figure;
+surf(x_grid(2:end)', t', (Psi(1:N,:).^2)','LineStyle','none')
+title({'Stochastic 1D NLSE with additive noise', ...
+       'implicit (CN) E-M Scheme'}, 'FontSize', 18);
+xlabel('$x$', Interpreter='latex', FontSize=20);
+ylabel('$t$', Interpreter='latex', FontSize=20);
+zlabel('$|\psi|^2$', Interpreter='latex', FontSize=20);
+colormap jet;
+colorbarHandle = colorbar;
+ylabel(colorbarHandle, '$|\psi|^2$', 'Interpreter','latex', 'FontSize',18);
+
+%% Semi-implicit time stepping
+% (implicit for linear drift term + explicit for nonlinear drift term)
+% This becomes unstable for larger time step (dt = 0.005)
+% and only stable for e.g. dt = 0.001
+
+% Spatial parameters
+Lx = 2*sqrt(2)*pi;
+N  = 64;
+dx = Lx / N;
+x  = linspace(-Lx/2, Lx/2-dx, N)';  % spatial grid
+
+% Temporal parameters
+dt = 0.001;
+Nt = 100000;
+t  = (0:Nt)*dt;
+
+% NLSE parameters
+kappa = 2.0;
+sigma = 0.01;
+
+% Initial condition
+A = 0.5;
+psi = A * (1 + 0.01 * cos(2*pi*x/Lx));
+psi = complex(psi, zeros(size(psi)));  % complex
+
+% Store |psi|^2
+X = zeros(N, Nt+1);
+X(:,1) = abs(psi).^2;
+
+% Laplacian operator (periodic BC)
+e = ones(N,1);
+Lop = spdiags([e -2*e e], -1:1, N, N) / dx^2;
+% periodic wrap
+Lop = full(Lop);
+Lop(1,end) = 1/dx^2;
+Lop(end,1) = 1/dx^2;
+Lop = sparse(Lop);
+
+% Implicit operator (precompute)
+I = speye(N);
+LHS = I - 1i*dt*Lop;  % constant
+
+% Time-stepping
+for n = 1:Nt
+    % Nonlinear term (explicit)
+    NL = 1i * kappa * dt * abs(psi).^2 .* psi;
+
+    % Stochastic additive noise
+    xi = randn(N,1) + 1i*randn(N,1);
+    noise = -1i * sigma * sqrt(dt) * xi;
+
+    % Right-hand side
+    RHS = psi + NL + noise;
+
+    % Solve linear system
+    psi = LHS \ RHS;
+
+    % Store solution
+    X(:,n+1) = abs(psi).^2;
+end
+
+% Plot snapshots
+plot_every = 100;
+figure;
+hold on;
+for n = 1:plot_every:Nt+1
+    plot(x, X(:,n));
+end
+xlabel('x');
+ylabel('|psi|^2');
+title('Stochastic 1D NLSE (additive noise)');
+grid on;
+hold off;
+
+% Surf plot of |psi|^2
+t_plot = t(1:plot_every:end); 
+X_plot = X(:,1:plot_every:end);
+
+figure;
+surf(x, t_plot, X_plot', 'EdgeColor', 'none'); % transpose X for correct orientation
+xlabel('$x$', Interpreter='latex', FontSize=20);
+ylabel('$t$', Interpreter='latex', FontSize=20);
+zlabel('$|\psi|^2$', Interpreter='latex', FontSize=20);
+title({'Stochastic 1D NLSE with additive noise', ...
+       'semi-implicit E-M + linear solver'}, 'FontSize', 18);
+colormap jet;
+view(2);   % view from top (optional, can remove for 3D view)
+colorbar;
+
+
+%% Fully implicit + Newton's method
+% Treat both linear and nonlinear drift terms implicitly
+
+T       = 100;           % final time
+L       = 2*sqrt(2)*pi;  % domian length
+N       = 64;            % number of spatial points
+dx      = L/N;           % mesh width
+dt      = 0.005;         % time step
+x_grid  = -L/2:dx:L/2;   % grid points
+t       = 0:dt:T;        % time points
+Nt      = T/dt;
+gam     = 2;
+
+X = zeros(2*N, Nt);
+
+% Initial conditions
+psi0 = init(x_grid, N, L);
+psi = psi0;
+
+% IC snapshot
+X(:,1) = psi;
+
+sigma = 0.01; % noise amplitude
+
+for i = 1:Nt
+    % Initial guess for Newton
+    psi_next = psi;
+
+    % Sample additive noise (complex)
+    xi = randn(2*N, 1); % independent for p and q parts
+    noise = sigma * sqrt(dt) * xi;
+
+    % Newton iteration
+    ci = 0;
+    err = 1;
+    
+    while err > 1e-13
+        [fvec, J] = NLSE_solve_fully_implicit(psi_next, psi, dx, dt, gam, N);
+        
+        % Include noise to residual (only to fvec)
+        fvec = fvec - noise;
+        
+        % Update Newton
+        psi_next = psi_next - (J \ fvec);
+        ci = ci + 1;
+        err = norm(fvec);
+        if ci == 10
+            err
+            err = 0.5e-14;
+        end
+    end
+
+    % Store solution
+    X(:,i+1) = psi_next;
+    psi = psi_next;
+end
+
+% %
+P   = X(1:N, :);         % p snapshots
+Q   = X(N+1:end, :);     % q snapshots
+Psi = abs(P + Q*1j);     % |psi| snapshots
+% 
+
+% % Plotting the solution and energy
+figure;
+surf(x_grid(2:end)', t', (Psi(1:N,:).^2)','LineStyle','none')
+title({'Stochastic 1D NLSE with additive noise', ...
+       'fully implicit E-M + Newtons method'}, 'FontSize', 18);
+xlabel('$x$', Interpreter='latex', FontSize=20);
+ylabel('$t$', Interpreter='latex', FontSize=20);
+zlabel('$|\psi|^2$', Interpreter='latex', FontSize=20);
+colormap jet;
+colorbarHandle = colorbar;
+ylabel(colorbarHandle, '$|\psi|^2$', 'Interpreter','latex', 'FontSize',18);
+
+
+%%
+clc; clear all;
+
+% Parameters
+Nx   = 2^6;                   % spatial points
+Lx   = 2*sqrt(2)*pi;          % domain length
+dx   = Lx / Nx;               
+x    = linspace(-Lx/2, Lx/2-dx, Nx)'; % periodic grid
+
+T    = 0.1;                   % final time
+dt   = 0.001;                 
+Nt   = round(T/dt);
+
+kappa = 2.0;                  % NLSE nonlinearity
+sigma = 0.01;                 % additive noise amplitude
+
+% Initial condition
+A = 0.5;
+psi = A * (1 + 0.01*cos(2*pi*x/Lx));
+psi = psi + 1i*zeros(size(psi));
+
+% Storage
+X = zeros(Nx, Nt+1);
+X(:,1) = abs(psi).^2;
+
+% Laplacian (periodic)
+e = ones(Nx,1);
+Lop = spdiags([e -2*e e], [-1 0 1], Nx, Nx)/dx^2;
+Lop(1,end) = 1/dx^2;   % periodic BC
+Lop(end,1) = 1/dx^2;
+
+I = speye(Nx);
+
+% CN operator
+LHS = I - 1i*dt/2 * Lop;
+RHS_Laplace = I + 1i*dt/2 * Lop;
+
+% Time-stepping
+for n = 1:Nt
+    % Nonlinear term (explicit)
+    NL = 1i * kappa * dt * abs(psi).^2 .* psi;
+    
+    % Additive noise
+    xi = randn(Nx,1) + 1i*randn(Nx,1);
+    noise = sigma * sqrt(dt) * xi;
+    
+    % Right-hand side
+    RHS = RHS_Laplace * psi + NL + noise;
+    
+    % Solve implicit linear system
+    psi = LHS \ RHS;
+    
+    % Store
+    X(:,n+1) = abs(psi).^2;
+end
+
+% Plot surface
+figure;
+surf((0:Nx-1)*dx, (0:Nt)*dt, X', 'EdgeColor', 'none');
+xlabel('x'); ylabel('t'); zlabel('|psi|^2');
+title('Stochastic 1D NLSE (CN + additive noise)');
+colormap jet;
+view(2); colorbar;
+
+
+%% Function for defining the initial conditions for NLSE problem
+function [y0] = init(x_grid, N, L)
+q0 = zeros(N,1);  % imag part
+p0 = zeros(N,1);  % real part 
+for j=1:1:N
+    p0(j,1) = 0.5*(1+ (0.01*cos(2*pi*x_grid(j)/L)));
+    q0(j,1) = 0;
+end
+y0=[p0; q0;];
+end
+%% Efficient Newton's iteration
+
+function [fvec, J] = NLSE_solve(y_next, y_now, dx, dt, gam, N)
+% Efficient residual and Jacobian for 1D NLSE implicit scheme
+%
+% Inputs:
+% y_now, y_next : [2N x 1] real vectors [p; q]
+% dx, dt, gam   : discretization, nonlinearity parameters
+% N             : number of spatial grid points
+%
+% Output:
+% fvec [2N x 1]  : nonlinear residual
+% J    [2N x 2N] : Jacobian matrix
+
+% ----------------------------------------
+% Preallocate residual and Jacobian arrays
+% ----------------------------------------
+fvec = zeros(2*N, 1);
+% sparse preallocation (each row ~6 nonzeros)
+J = spalloc(2*N, 2*N, 12*N);   
+
+% ------------------------------
+% Split state into q and p parts
+% ------------------------------
+p_now  = y_now(1:N);
+q_now  = y_now(N+1:end);
+p_next = y_next(1:N);
+q_next = y_next(N+1:end);
+
+% -----------------------------------------------------
+% Periodic extension (to avoid special boundary cases)
+% -----------------------------------------------------
+p_now_ext  = [p_now(end); p_now; p_now(1)];
+q_now_ext  = [q_now(end); q_now; q_now(1)];
+p_next_ext = [p_next(end); p_next; p_next(1)];
+q_next_ext = [q_next(end); q_next; q_next(1)];
+
+% -----------------------------------------------------
+% Loop through all interior points (uniform treatment)
+% -----------------------------------------------------
+for i = 1:N
+    % Local 3-point stencil indices (periodic wrap)
+    idx = i + (0:2);  % maps to i-1, i, i+1 in extended arrays
+
+    % Collect local triplets
+    pk  = p_now_ext(idx);
+    qk  = q_now_ext(idx);
+    pk1 = p_next_ext(idx);
+    qk1 = q_next_ext(idx);
+
+    % Local nonlinear residual and Jacobian (2x6)
+    % [r, jac] = NLSE_eq_local(pk1, qk1, pk, qk, dx, dt, gam);
+    [r, jac] = NLSE_eq_local_BC(pk1, qk1, pk, qk, dx, dt, gam, 'dirichlet', i, N);
+    % Fill global residual
+    fvec(i)   = r(1);
+    fvec(N+i) = r(2);
+
+    % Indices for q and p in global system
+    i_prev = mod(i-2, N) + 1; % i-1
+    i_curr = i;               % i
+    i_next = mod(i, N) + 1;   % i+1
+    
+    i_fill = [i_prev, i_curr, i_next, ...
+                N+i_prev, N+i_curr, N+i_next];
+
+    % Place local Jacobian into sparse global matrix
+    J(i,   i_fill) = jac(1,:);
+    J(N+i, i_fill) = jac(2,:);
+end
+end
+
+
+function [residual, jac] = NLSE_eq_local(pk1, qk1, pk, qk, dx, dt, gam)
+% Local 3-point Crank–Nicolson (midpoint rule) for NLSE (real form)
+%
+% Inputs:
+% qk1, pk1 : 3-point vectors at time n+1
+% qk,  pk  : 3-point vectors at time n
+%
+% Outputs:
+% residual : local residual vector (6 x 1) 
+% jac      : local Jacobian matrix (2 x 6)
+% --------------------------------------------
+
+% Midpoint nonlinear term (Crank–Nicolson)
+pmid = 0.5 * (pk(2) + pk1(2)); % midpoint over time at i
+qmid = 0.5 * (qk(2) + qk1(2));
+r2mid = qmid^2 + pmid^2;
+
+% Laplacians (central difference)
+dp_now  = (pk(1) - 2*pk(2) + pk(3)) / dx^2;
+dq_now  = (qk(1) - 2*qk(2) + qk(3)) / dx^2;
+dp_next = (pk1(1) - 2*pk1(2) + pk1(3)) / dx^2;
+dq_next = (qk1(1) - 2*qk1(2) + qk1(3)) / dx^2;
+
+% Crank–Nicolson (average Laplacian)
+dp_avg = 0.5 * (dp_now + dp_next);
+dq_avg = 0.5 * (dq_now + dq_next);
+
+% --------------------------------------------
+% Residuals (real and imaginary parts)
+% --------------------------------------------
+residual = [
+    pk1(2) - pk(2) + dt * ( dq_avg + gam * r2mid * qmid );  % p-equation
+    qk1(2) - qk(2) - dt * ( dp_avg + gam * r2mid * pmid )   % q-equation
+];
+
+% --------------------------------------------
+% Analytical Jacobian (2x6)
+% --------------------------------------------
+deriv_Lap = [1, -2, 1] / (2*dx^2); % average of Laplacians over k, k+1
+
+% partials of nonlinear term
+% dr2_dpk1 = [0, pmid, 0]; 
+% dr2_dqk1 = [0, qmid, 0];
+
+% Initialization
+jac = zeros(2,6);
+
+% Row 1: derivative of p-residual
+% dq_avg term → acts on q^{k+1}
+jac(1,4:6) = dt * deriv_Lap;  
+% nonlinear term wrt p^{k+1}
+jac(1,2) = jac(1,2) + dt*gam*(2*pmid*qmid)/2;
+% nonlinear term wrt q^{k+1}
+jac(1,5) = jac(1,5) + dt*gam*(3*qmid^2 + pmid^2)/2;
+% identity term
+jac(1,2) = jac(1,2) + 1;
+
+% Row 2: derivative of q-residual
+% dp_avg term → acts on p^{n+1}
+jac(2,1:3) = -dt * deriv_Lap;
+% nonlinear term wrt p^{n+1}
+jac(2,2) = jac(2,2) - dt*gam*(3*pmid^2 + qmid^2)/2;
+% nonlinear term wrt q^{n+1}
+jac(2,5) = jac(2,5) - dt*gam*(2*pmid*qmid)/2;
+% identity term
+jac(2,5) = jac(2,5) + 1;
+
+end
+
+function [fvec, J] = NLSE_solve_BC(y_next, y_now, dx, dt, gam, N, BCtype)
+% Efficient residual and Jacobian for 1D NLSE implicit scheme with BC option
+%
+% Inputs:
+% y_now, y_next : [2N x 1] real vectors [p; q]
+% dx, dt, gam   : discretization and nonlinearity parameters
+% N             : number of spatial grid points
+% BCtype        : 'periodic', 'dirichlet', 'neumann'
+%
+% Output:
+% fvec [2N x 1]  : nonlinear residual
+% J    [2N x 2N] : Jacobian matrix
+
+fvec = zeros(2*N,1);
+J = spalloc(2*N, 2*N, 12*N);
+
+% Split p and q
+p_now  = y_now(1:N); q_now  = y_now(N+1:end);
+p_next = y_next(1:N); q_next = y_next(N+1:end);
+
+% ------------------------------
+% Extend arrays based on BC
+% ------------------------------
+switch lower(BCtype)
+    case 'periodic'
+        % Periodic extension
+        p_now_ext  = [p_now(end); p_now; p_now(1)];
+        q_now_ext  = [q_now(end); q_now; q_now(1)];
+        p_next_ext = [p_next(end); p_next; p_next(1)];
+        q_next_ext = [q_next(end); q_next; q_next(1)];
+        interior = 1:N;
+    case 'dirichlet'
+        % No extension, skip boundaries in loop
+        p_now_ext  = p_now;
+        q_now_ext  = q_now;
+        p_next_ext = p_next;
+        q_next_ext = q_next;
+        interior = 2:N-1;  % interior points
+    case 'neumann'
+        % No extension, skip boundaries in loop
+        p_now_ext  = p_now;
+        q_now_ext  = q_now;
+        p_next_ext = p_next;
+        q_next_ext = q_next;
+        interior = 2:N-1;  % interior points
+    otherwise
+        error('Unknown BC type: %s', BCtype);
+end
+
+% ------------------------------
+% Loop over interior points
+% ------------------------------
+for i = interior
+    switch lower(BCtype)
+        case 'periodic'
+            idx = i:i+2;  % extended array
+        case {'dirichlet','neumann'}
+            idx = i-1:i+1; % standard 3-point stencil
+    end
+
+    pk  = p_now_ext(idx);
+    qk  = q_now_ext(idx);
+    pk1 = p_next_ext(idx);
+    qk1 = q_next_ext(idx);
+
+    [r, jac] = NLSE_eq_local(pk1, qk1, pk, qk, dx, dt, gam);
+
+    fvec(i)   = r(1);
+    fvec(N+i) = r(2);
+
+    % Global Jacobian indices
+    if strcmpi(BCtype,'periodic')
+        i_prev = mod(i-2, N)+1;
+        i_curr = i;
+        i_next = mod(i, N)+1;
+    else
+        i_prev = i-1;
+        i_curr = i;
+        i_next = i+1;
+    end
+
+    i_fill = [i_prev,i_curr,i_next, N+i_prev,N+i_curr,N+i_next];
+    J(i,   i_fill) = jac(1,:);
+    J(N+i, i_fill) = jac(2,:);
+end
+
+% ------------------------------
+% Apply boundary conditions
+% ------------------------------
+switch lower(BCtype)
+    case 'dirichlet'
+        fvec([1,N,N+1,2*N]) = [p_next(1); p_next(N); q_next(1); q_next(N)];
+        J([1,N,N+1,2*N],:) = 0;
+        J(1,1)=1; J(N,N)=1; J(N+1,N+1)=1; J(2*N,2*N)=1;
+    case 'neumann'
+        % one-sided differences already inside NLSE_eq_local if desired
+        % or leave fvec = 0 for residual at boundaries
+        fvec([1,N,N+1,2*N]) = 0;  
+        J([1,N,N+1,2*N],:) = 0;
+        J(1,1)=1; J(N,N)=1; J(N+1,N+1)=1; J(2*N,2*N)=1;
+end
+
+end
+
+function [residual, jac] = NLSE_eq_local_BC(pk1, qk1, pk, qk, dx, dt, gam, BCtype, i, N)
+% Local 3-point Crank–Nicolson (midpoint rule) for 1D NLSE (real form)
+%
+% Inputs:
+% pk1,qk1 : 3-point vectors at time n+1 (center + neighbors)
+% pk,qk   : 3-point vectors at time n
+% BCtype  : 'periodic','dirichlet','neumann'
+% i       : current global index
+% N       : total number of grid points
+%
+% Outputs:
+% residual : 2x1 vector
+% jac      : 2x6 matrix
+
+% Midpoint nonlinear term (Crank–Nicolson)
+pmid = 0.5 * (pk(2) + pk1(2)); % midpoint at center
+qmid = 0.5 * (qk(2) + qk1(2));
+r2mid = pmid^2 + qmid^2;
+
+% ---------------------------
+% Laplacian (with BC handling)
+% ---------------------------
+switch lower(BCtype)
+    case 'periodic'
+        dp_now  = (pk(1) - 2*pk(2) + pk(3)) / dx^2;
+        dq_now  = (qk(1) - 2*qk(2) + qk(3)) / dx^2;
+        dp_next = (pk1(1) - 2*pk1(2) + pk1(3)) / dx^2;
+        dq_next = (qk1(1) - 2*qk1(2) + qk1(3)) / dx^2;
+
+    case 'dirichlet'
+        % Dirichlet: u(0)=u(L)=0, center = pk(2)
+        if i==1 || i==N
+            dp_now=0; dq_now=0; dp_next=0; dq_next=0;
+        else
+            dp_now  = (pk(1) - 2*pk(2) + pk(3)) / dx^2;
+            dq_now  = (qk(1) - 2*qk(2) + qk(3)) / dx^2;
+            dp_next = (pk1(1) - 2*pk1(2) + pk1(3)) / dx^2;
+            dq_next = (qk1(1) - 2*qk1(2) + qk1(3)) / dx^2;
+        end
+
+    case 'neumann'
+        % Neumann: u'(0)=u'(L)=0, use one-sided differences at boundaries
+        if i==1
+            dp_now  = ( -2*pk(2) + 2*pk(3) ) / dx^2;   % forward difference
+            dq_now  = ( -2*qk(2) + 2*qk(3) ) / dx^2;
+            dp_next = ( -2*pk1(2) + 2*pk1(3) ) / dx^2;
+            dq_next = ( -2*qk1(2) + 2*qk1(3) ) / dx^2;
+        elseif i==N
+            dp_now  = ( 2*pk(1) - 2*pk(2) ) / dx^2;   % backward difference
+            dq_now  = ( 2*qk(1) - 2*qk(2) ) / dx^2;
+            dp_next = ( 2*pk1(1) - 2*pk1(2) ) / dx^2;
+            dq_next = ( 2*qk1(1) - 2*qk1(2) ) / dx^2;
+        else
+            dp_now  = (pk(1) - 2*pk(2) + pk(3)) / dx^2;
+            dq_now  = (qk(1) - 2*qk(2) + qk(3)) / dx^2;
+            dp_next = (pk1(1) - 2*pk1(2) + pk1(3)) / dx^2;
+            dq_next = (qk1(1) - 2*qk1(2) + qk1(3)) / dx^2;
+        end
+end
+
+dp_avg = 0.5*(dp_now + dp_next);
+dq_avg = 0.5*(dq_now + dq_next);
+
+% ---------------------------
+% Residuals
+% ---------------------------
+residual = [
+    pk1(2) - pk(2) + dt * ( dq_avg + gam*r2mid*qmid );
+    qk1(2) - qk(2) - dt * ( dp_avg + gam*r2mid*pmid )
+];
+
+% ---------------------------
+% Jacobian (approx, can be improved)
+% ---------------------------
+deriv_Lap = [1 -2 1]/(2*dx^2); % average
+jac = zeros(2,6);
+
+% Row 1
+jac(1,4:6) = dt*deriv_Lap;
+jac(1,2) = jac(1,2) + dt*gam*(2*pmid*qmid)/2 + 1;
+jac(1,5) = jac(1,5) + dt*gam*(3*qmid^2 + pmid^2)/2;
+
+% Row 2
+jac(2,1:3) = -dt*deriv_Lap;
+jac(2,2) = jac(2,2) - dt*gam*(3*pmid^2 + qmid^2)/2;
+jac(2,5) = jac(2,5) - dt*gam*(2*pmid*qmid)/2 + 1;
+
+end
+
+
+
+function [F, J] = NLSE_solve_fully_implicit(psi_next, psi, dx, dt, gam, N)
+
+% psi_next and psi are in R^{2N} where:
+% psi_next = [p_next; q_next], psi = [p; q].
+
+% Split real & imaginary parts
+p_next = psi_next(1:N);
+q_next = psi_next(N+1:end);
+
+p = psi(1:N);
+q = psi(N+1:end);
+
+% Laplacian matrix (periodic BC)
+e = ones(N,1);
+L = spdiags([e -2*e e], -1:1, N, N) / dx^2;
+L(1,end) = 1/dx^2;
+L(end,1) = 1/dx^2;
+
+% Complex magnitude squared at time levels
+abs2_next = p_next.^2 + q_next.^2;
+abs2 = p.^2 + q.^2;
+
+% CN residual (real form)
+Fp = p_next - p + dt * ( (L*q_next + L*q)/2 ) ...
+    + dt * gam * ( (abs2_next .* q_next + abs2 .* q)/2 );
+
+Fq = q_next - q - dt * ( (L*p_next + L*p)/2 ) ...
+    - dt * gam * ( (abs2_next .* p_next + abs2 .* p)/2 );
+
+% Assemble residual
+F = [Fp; Fq];
+
+% ---- JACOBIAN ----
+% Derivatives for nonlinearity: d(|psi|^2 psi)/d(p,q)
+% For real form:
+D11 = spdiags(gam*(2*p_next.*q_next), 0, N, N);
+D22 = spdiags(gam*(2*p_next.*q_next), 0, N, N);
+D12 = spdiags(gam*(3*q_next.^2 + p_next.^2), 0, N, N);
+D21 = spdiags(-gam*(3*p_next.^2 + q_next.^2), 0, N, N);
+
+% Linear blocks
+A = speye(N) + dt/2 * (L);   % from p-equation wrt q
+B = speye(N) - dt/2 * (L);   % from q-equation wrt p
+
+% Jacobian in block matrix form:
+% J = [ I  dt/2*(L + D11) ; -dt/2*(L + D22)   I ]
+J = [ speye(N) + dt/2*D12 ,    dt/2*(L + D11);
+     -dt/2*(L + D22)      ,  speye(N) + dt/2*D21 ];
+
+end
