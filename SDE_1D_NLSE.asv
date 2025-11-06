@@ -184,22 +184,23 @@ xrho_sum = sum(xrho, 1) * dx;
 % centre of mass over time
 x_cm = xrho_sum ./ Mt;
 
+% basic stats over time
+% mean_xcm = mean(x_cm);
+var_xcm  = var(x_cm);   % sample variance (MATLAB's var uses N-1 by default)
+
 % display
 fprintf('Mean of center of mass: %g\n', mean(x_cm));
-fprintf('Variance of center of mass: %g\n', var(x_cm));
+fprintf('Centre of mass variance over time: %g\n', var_xcm);
 
 % plots
 figure;
 plot(t(1:size(x_cm, 2)), x_cm, 'LineWidth', 1.2);
 xlabel('t', 'FontSize', 20); ylabel('x_{CM}(t)', 'FontSize', 20);
 title('Centre of mass over time', 'FontSize', 20);
-ax = gca;
-ax.FontSize = 15;
 
 figure;
 histogram(x_cm, 40);
 xlabel('x_{CM}', 'FontSize', 20); ylabel('count', 'FontSize', 20);
-ax = gca; ax.FontSize = 15;
 title('Histogram of centre of mass over time', 'FontSize', 20);
 
 
