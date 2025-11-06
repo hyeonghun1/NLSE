@@ -2,20 +2,20 @@ clc; clear;
 % This code simulates 1D stochastic NLSE using several numerical schemes,
 % such as explicit, implicit (backward or midpoint) Euler-Maruyama schemes.
 
-%% Explicit time stepping (Euler-Maruyama) 
-% This is unstable even for small time step, e.g., dt=0.001.
+%% Implicit (Crank-Nicolson) + Newton's method
 
-% Parameters
-L   = 2*sqrt(2)*pi;    % domain length
-N   = 64;              % number of spatial points
-dx  = L/N;             
-x   = linspace(-L/2, L/2-dx, N)';  % spatial grid
-T   = 10;              % final time
+T   = 100;           % final time
 dt  = 0.001;           % time step
-Nt  = round(T/dt);     % number of timesteps
-t   = 0:dt:T;          % time
-gam = 2;               % nonlinearity
-sigma = 0.01;           % noise amplitude
+
+L   = 2*sqrt(2)*pi;  % domian length
+N   = 64;            % number of spatial points
+dx  = L/N;           % mesh width
+dt  = 0.005;         % time step
+x   = linspace(-L/2, L/2-dx, N)';  % spatial grid
+t   = 0:dt:T;        % time points
+Nt  = T/dt;
+gam = 2;
+
 
 % Initial condition
 p0 = 0.5*(1 + 0.01*cos(2*pi*x/L));
@@ -26,63 +26,6 @@ P = zeros(N, Nt+1);
 P(:,1) = p0;
 Q = zeros(N, Nt+1);
 Q(:,1) = q0;
-
-% Laplacian operator (periodic)
-e = ones(N,1);
-Dxx = spdiags([e -2*e e], -1:1, N, N)/dx^2;
-Dxx(1,N) = 1/dx^2; Dxx(N,1) = 1/dx^2;  % periodic BC
-
-rng('default');  % for reproducibility
-p = p0;
-q = q0;
-for n = 1:Nt
-    % Laplacians
-    Lp = Dxx*p;
-    Lq = Dxx*q;
-    
-    % Nonlinear terms
-    pmq = p.^2 + q.^2;
-    
-    % Generate additive noise
-    dW1 = sqrt(dt)*randn(N,1);
-    dW2 = sqrt(dt)*randn(N,1);
-    
-    % Explicit Euler-Maruyama update
-    p = p - dt*(Lq + gam*pmq.*q) + sigma*dW1;
-    q = q + dt*(Lp + gam*pmq.*p) + sigma*dW2;
-    
-    % Store
-    P(:,n+1) = p;
-    Q(:,n+1) = q;
-end
-
-% Compute |psi|^2
-Psi2 = P.^2 + Q.^2;
-
-% Plot
-figure;
-surf(x', t', Psi2', 'LineStyle', 'none');
-title({'1D stochastic NLSE with additive noise', ...
-       '(explicit Euler-Maruyama)'}, 'FontSize', 18);
-xlabel('$x$', Interpreter='latex', FontSize=20);
-ylabel('$t$', Interpreter='latex', FontSize=20);
-zlabel('$|\psi|^2$', Interpreter='latex', FontSize=20);
-colormap jet;
-% shading interp;     % smooth surface
-colorbarHandle = colorbar;
-ylabel(colorbarHandle, '$|\psi|^2$', 'Interpreter','latex', 'FontSize',18);
-
-
-%% Implicit (Crank-Nicolson) + Newton's method
-
-T       = 100;           % final time
-L       = 2*sqrt(2)*pi;  % domian length
-dx      = L/64;          % mesh width
-dt      = 0.005;         % time step
-x_grid  = -L/2:dx:L/2;   % grid points
-t       = 0:dt:T;        % time points
-Nt      = T/dt;
-gam     = 2;
 
 X = zeros(2*N, Nt);
 
@@ -97,6 +40,8 @@ X(:,1) = psi;
 % the deterministic case, but it too large the solution loses physical
 % meaning (the solution will not look like solitons)
 sigma = 0.01; 
+
+% rng('default');  % for reproducibility
 
 BC_type = 'periodic';   % periodic, dirichlet, neumann          
 for i = 1:Nt
@@ -127,8 +72,8 @@ for i = 1:Nt
         psi_next(N+N) = qR;
     end
     
-    [fvec, J] = NLSE_solve(psi_next, psi, dx, dt, gam, N);
-    % [fvec, J] = NLSE_solve_BC(psi_next, psi, dx, dt, gam, N, BC_type);
+    % [fvec, J] = NLSE_solve(psi_next, psi, dx, dt, gam, N);
+    [fvec, J] = NLSE_solve_BC(psi_next, psi, dx, dt, gam, N, BC_type);
     % [fvec, J] = NLSE_solve_BC(psi_next, psi, dx, dt, gam, N, BC_type, pL, pR, qL, qR);
 
     
@@ -157,7 +102,7 @@ Q   = X(N+1:end, :);     % q snapshots
 Psi = abs(P + Q*1j);     % |psi| snapshots
 % 
 
-% % Plotting the solution and energy
+% % Plotting the solution (mass density/power)
 figure;
 surf(x_grid(2:end)', t', (Psi(1:N,:).^2)','LineStyle','none')
 title({'Stochastic 1D NLSE with additive noise', ...
@@ -169,7 +114,8 @@ colormap jet;
 colorbarHandle = colorbar;
 ylabel(colorbarHandle, '$|\psi|^2$', 'Interpreter','latex', 'FontSize',18);
 
-%% Compute center-of-mass and its statistics for this run
+
+%% Compute center-of-massand its statistics for this run
 
 % squared amplitude (mass/particle density)
 rho = Psi.^2;        % |psi|^2 : size N x Nt+1
@@ -203,300 +149,19 @@ ax = gca; ax.FontSize = 15;
 title('Histogram of centre of mass over time', 'FontSize', 20);
 
 
-%% Semi-implicit time stepping
-% (implicit for linear drift term + explicit for nonlinear drift term)
-% This becomes unstable for larger time step (dt = 0.005)
-% and only stable for e.g. dt = 0.001
-
-% Spatial parameters
-Lx = 2*sqrt(2)*pi;
-N  = 64;
-dx = Lx / N;
-x  = linspace(-Lx/2, Lx/2-dx, N)';  % spatial grid
-
-% Temporal parameters
-dt = 0.001;
-Nt = 100000;
-t  = (0:Nt)*dt;
-
-% NLSE parameters
-kappa = 2.0;
-sigma = 0.05;
-
-% Initial condition
-A = 0.5;
-psi = A * (1 + 0.01 * cos(2*pi*x/Lx));
-psi = complex(psi, zeros(size(psi)));  % complex
-
-% Store |psi|^2
-X = zeros(N, Nt+1);
-X(:,1) = abs(psi).^2;
-
-% Laplacian operator (periodic BC)
-e = ones(N,1);
-Lop = spdiags([e -2*e e], -1:1, N, N) / dx^2;
-% periodic wrap
-Lop = full(Lop);
-Lop(1,end) = 1/dx^2;
-Lop(end,1) = 1/dx^2;
-Lop = sparse(Lop);
-
-% Implicit operator (precompute)
-I = speye(N);
-LHS = I - 1i*dt*Lop;  % constant
-
-% Time-stepping
-for n = 1:Nt
-    % Nonlinear term (explicit)
-    NL = 1i * kappa * dt * abs(psi).^2 .* psi;
-
-    % Stochastic additive noise
-    xi = randn(N,1) + 1i*randn(N,1);
-    noise = -1i * sigma * sqrt(dt) * xi;
-
-    % Right-hand side
-    RHS = psi + NL + noise;
-
-    % Solve linear system
-    psi = LHS \ RHS;
-
-    % Store solution
-    X(:,n+1) = abs(psi).^2;
-end
-
-% Plot snapshots
-plot_every = 100;
-figure;
-hold on;
-for n = 1:plot_every:Nt+1
-    plot(x, X(:,n));
-end
-xlabel('x');
-ylabel('|psi|^2');
-title('Stochastic 1D NLSE (additive noise)');
-grid on;
-hold off;
-
-% Surf plot of |psi|^2
-t_plot = t(1:plot_every:end); 
-X_plot = X(:,1:plot_every:end);
-
-figure;
-surf(x, t_plot, X_plot', 'EdgeColor', 'none'); % transpose X for correct orientation
-xlabel('$x$', Interpreter='latex', FontSize=20);
-ylabel('$t$', Interpreter='latex', FontSize=20);
-zlabel('$|\psi|^2$', Interpreter='latex', FontSize=20);
-title({'Stochastic 1D NLSE with additive noise', ...
-       'semi-implicit E-M + linear solver'}, 'FontSize', 18);
-colormap jet;
-view(2);   % view from top (optional, can remove for 3D view)
-colorbar;
-
-
-%% Fully implicit + Newton's method
-% Treat both linear and nonlinear drift terms implicitly
-
-T       = 100;           % final time
-L       = 2*sqrt(2)*pi;  % domian length
-N       = 64;            % number of spatial points
-dx      = L/N;           % mesh width
-dt      = 0.005;         % time step
-x_grid  = -L/2:dx:L/2;   % grid points
-t       = 0:dt:T;        % time points
-Nt      = T/dt;
-gam     = 2;
-
-X = zeros(2*N, Nt);
-
-% Initial conditions
-psi0 = init(x_grid, N, L);
-psi = psi0;
-
-% IC snapshot
-X(:,1) = psi;
-
-sigma = 0.01; % noise amplitude
-
-for i = 1:Nt
-    % Initial guess for Newton
-    psi_next = psi;
-
-    % Sample additive noise (complex)
-    xi = randn(2*N, 1); % independent for p and q parts
-    noise = sigma * sqrt(dt) * xi;
-
-    % Newton iteration
-    ci = 0;
-    err = 1;
-    
-    while err > 1e-13
-        [fvec, J] = NLSE_solve_fully_implicit(psi_next, psi, dx, dt, gam, N);
-        
-        % Include noise to residual (only to fvec)
-        fvec = fvec - noise;
-        
-        % Update Newton
-        psi_next = psi_next - (J \ fvec);
-        ci = ci + 1;
-        err = norm(fvec);
-        if ci == 10
-            err
-            err = 0.5e-14;
-        end
-    end
-
-    % Store solution
-    X(:,i+1) = psi_next;
-    psi = psi_next;
-end
-
-% %
-P   = X(1:N, :);         % p snapshots
-Q   = X(N+1:end, :);     % q snapshots
-Psi = abs(P + Q*1j);     % |psi| snapshots
-% 
-
-% % Plotting the solution and energy
-figure;
-surf(x_grid(2:end)', t', (Psi(1:N,:).^2)','LineStyle','none')
-title({'Stochastic 1D NLSE with additive noise', ...
-       'fully implicit E-M + Newtons method'}, 'FontSize', 18);
-xlabel('$x$', Interpreter='latex', FontSize=20);
-ylabel('$t$', Interpreter='latex', FontSize=20);
-zlabel('$|\psi|^2$', Interpreter='latex', FontSize=20);
-colormap jet;
-colorbarHandle = colorbar;
-ylabel(colorbarHandle, '$|\psi|^2$', 'Interpreter','latex', 'FontSize',18);
-
-
-%%
-clc; clear all;
-
-% Parameters
-Nx   = 2^6;                   % spatial points
-Lx   = 2*sqrt(2)*pi;          % domain length
-dx   = Lx / Nx;               
-x    = linspace(-Lx/2, Lx/2-dx, Nx)'; % periodic grid
-
-T    = 0.1;                   % final time
-dt   = 0.001;                 
-Nt   = round(T/dt);
-
-kappa = 2.0;                  % NLSE nonlinearity
-sigma = 0.01;                 % additive noise amplitude
-
-% Initial condition
-A = 0.5;
-psi = A * (1 + 0.01*cos(2*pi*x/Lx));
-psi = psi + 1i*zeros(size(psi));
-
-% Storage
-X = zeros(Nx, Nt+1);
-X(:,1) = abs(psi).^2;
-
-% Laplacian (periodic)
-e = ones(Nx,1);
-Lop = spdiags([e -2*e e], [-1 0 1], Nx, Nx)/dx^2;
-Lop(1,end) = 1/dx^2;   % periodic BC
-Lop(end,1) = 1/dx^2;
-
-I = speye(Nx);
-
-% CN operator
-LHS = I - 1i*dt/2 * Lop;
-RHS_Laplace = I + 1i*dt/2 * Lop;
-
-% Time-stepping
-for n = 1:Nt
-    % Nonlinear term (explicit)
-    NL = 1i * kappa * dt * abs(psi).^2 .* psi;
-    
-    % Additive noise
-    xi = randn(Nx,1) + 1i*randn(Nx,1);
-    noise = sigma * sqrt(dt) * xi;
-    
-    % Right-hand side
-    RHS = RHS_Laplace * psi + NL + noise;
-    
-    % Solve implicit linear system
-    psi = LHS \ RHS;
-    
-    % Store
-    X(:,n+1) = abs(psi).^2;
-end
-
-% Plot surface
-figure;
-surf((0:Nx-1)*dx, (0:Nt)*dt, X', 'EdgeColor', 'none');
-xlabel('x'); ylabel('t'); zlabel('|psi|^2');
-title('Stochastic 1D NLSE (CN + additive noise)');
-colormap jet;
-view(2); colorbar;
-
-
-%%
-function [F, J] = NLSE_solve_fully_implicit(psi_next, psi, dx, dt, gam, N)
-
-% psi_next and psi are in R^{2N} where:
-% psi_next = [p_next; q_next], psi = [p; q].
-
-% Split real & imaginary parts
-p_next = psi_next(1:N);
-q_next = psi_next(N+1:end);
-
-p = psi(1:N);
-q = psi(N+1:end);
-
-% Laplacian matrix (periodic BC)
-e = ones(N,1);
-L = spdiags([e -2*e e], -1:1, N, N) / dx^2;
-L(1,end) = 1/dx^2;
-L(end,1) = 1/dx^2;
-
-% Complex magnitude squared at time levels
-abs2_next = p_next.^2 + q_next.^2;
-abs2 = p.^2 + q.^2;
-
-% CN residual (real form)
-Fp = p_next - p + dt * ( (L*q_next + L*q)/2 ) ...
-    + dt * gam * ( (abs2_next .* q_next + abs2 .* q)/2 );
-
-Fq = q_next - q - dt * ( (L*p_next + L*p)/2 ) ...
-    - dt * gam * ( (abs2_next .* p_next + abs2 .* p)/2 );
-
-% Assemble residual
-F = [Fp; Fq];
-
-% ---- JACOBIAN ----
-% Derivatives for nonlinearity: d(|psi|^2 psi)/d(p,q)
-% For real form:
-D11 = spdiags(gam*(2*p_next.*q_next), 0, N, N);
-D22 = spdiags(gam*(2*p_next.*q_next), 0, N, N);
-D12 = spdiags(gam*(3*q_next.^2 + p_next.^2), 0, N, N);
-D21 = spdiags(-gam*(3*p_next.^2 + q_next.^2), 0, N, N);
-
-% Linear blocks
-A = speye(N) + dt/2 * (L);   % from p-equation wrt q
-B = speye(N) - dt/2 * (L);   % from q-equation wrt p
-
-% Jacobian in block matrix form:
-% J = [ I  dt/2*(L + D11) ; -dt/2*(L + D22)   I ]
-J = [ speye(N) + dt/2*D12 ,    dt/2*(L + D11);
-     -dt/2*(L + D22)      ,  speye(N) + dt/2*D21 ];
-
-end
 
 
 %% Function for defining the initial conditions for NLSE problem
 function [y0] = init(x_grid, N, L)
 q0 = zeros(N,1);  % imag part
 p0 = zeros(N,1);  % real part 
-for j=1:1:N
+for j = 1:N
     p0(j,1) = 0.5*(1+ (0.01*cos(2*pi*x_grid(j)/L)));
     q0(j,1) = 0;
 end
 y0=[p0; q0;];
 end
+
 %% Efficient Newton's iteration
 
 function [fvec, J] = NLSE_solve(y_next, y_now, dx, dt, gam, N)
