@@ -30,7 +30,7 @@ Q(:,1) = q0;
 X = zeros(2*N, Nt);
 
 % Initial conditions
-psi0 = init(x_grid, N, L);
+psi0 = init(x, N, L);
 psi = psi0;
 
 % IC snapshot
@@ -104,7 +104,7 @@ Psi = abs(P + Q*1j);     % |psi| snapshots
 
 % % Plotting the solution (mass density/power)
 figure;
-surf(x_grid(2:end)', t', (Psi(1:N,:).^2)','LineStyle','none')
+surf(x', t', (Psi(1:N,:).^2)','LineStyle','none')
 title({'Stochastic 1D NLSE with additive noise', ...
        'implicit (CN) E-M Scheme'}, 'FontSize', 18);
 xlabel('$x$', Interpreter='latex', FontSize=20);
@@ -116,19 +116,6 @@ ylabel(colorbarHandle, '$|\psi|^2$', 'Interpreter','latex', 'FontSize',18);
 
 
 %% Compute center-of-massand its statistics for this run
-
-% squared amplitude (mass/particle density)
-rho = Psi.^2;        % |psi|^2 : size N x Nt+1
-
-% total mass over time: integral [rho(x,t)]dx = \sum_i^N [rho_i] * deltax
-Mt = sum(rho, 1) * dx;
-
-% integral [x * rho(x,t)] dx
-xrho = x .* rho;
-xrho_sum = sum(xrho, 1) * dx;
-
-% centre of mass over time
-x_cm = xrho_sum ./ Mt;
 
 % display
 fprintf('Mean of center of mass: %g\n', mean(x_cm));
@@ -149,6 +136,234 @@ ax = gca; ax.FontSize = 15;
 title('Histogram of centre of mass over time', 'FontSize', 20);
 
 
+%% Simul Setup
+
+NLSE      = struct();
+NLSE_soln = struct();
+
+NLSE.T   = 100;           % final time
+NLSE.dt  = 0.001;         % time step
+
+NLSE.L   = 2*sqrt(2)*pi;  % domian length
+NLSE.N   = 64;            % number of spatial points
+NLSE.dx  = NLSE.L/NLSE.N;           % mesh width
+NLSE.dt  = 0.005;         % time step
+NLSE.x   = linspace(-NLSE.L/2, NLSE.L/2, NLSE.N)';  % spatial grid
+NLSE.t   = 0:NLSE.dt:NLSE.T;        % time points
+NLSE.Nt  = NLSE.T/NLSE.dt;
+
+NLSE.gam = 2;
+
+
+% Initial condition
+p0 = 0.5*(1 + 0.01*cos(2*pi*NLSE.x/NLSE.L));
+q0 = zeros(NLSE.N,1);
+
+% Preallocate solution
+NLSE_soln.P = zeros(NLSE.N, NLSE.Nt+1);
+NLSE_soln.P(:,1) = p0;
+NLSE_soln.Q = zeros(NLSE.N, NLSE.Nt+1);
+NLSE_soln.Q(:,1) = q0;
+
+NLSE_soln.X = zeros(2*NLSE.N, NLSE.Nt);
+
+% Initial conditions
+psi0 = init(NLSE.x, NLSE.N, NLSE.L);
+psi = psi0;
+
+% IC snapshot
+NLSE_soln.X(:,1) = psi;
+
+% Noise amplitude - if this is very small, the solution looks similar to
+% the deterministic case, but it too large the solution loses physical
+% meaning (the solution will not look like solitons)
+NLSE.sigma = 0.01; 
+
+%% Sample trajectories
+
+% rng('default');  % for reproducibility
+
+BC_type = 'periodic';   % periodic, dirichlet, neumann          
+
+num_samples = 200;   % choose e.g., 20-100
+
+x_cm_all = zeros(num_samples, NLSE.Nt+1);
+
+for s = 1:num_samples
+    fprintf("Running sample %d/%d...\n", s, num_samples)
+    NLSE_soln = simulate_1D_NLSE(NLSE, NLSE_soln, BC_type);
+    x_cm = compute_center_of_mass(NLSE_soln.Psi, NLSE.x, NLSE.dx);
+    x_cm_all(s,:) = x_cm;
+end
+
+%% plot trajectories of center of mean
+
+x_cm_mean = mean(x_cm_all, 1);       % mean trajectory
+x_cm_var  = var(x_cm_all, 0, 1);     % variance trajectory
+
+figure;
+
+subplot(2,2,1); hold on;
+plot(NLSE.t, x_cm_all(1:10, :)', 'Color', [0.7 0.7 1]);
+plot(NLSE.t, mean(x_cm_all(1:10, :), 1), 'k', 'LineWidth', 2);
+title('s = 10', 'FontSize', 18);
+% xlabel('t', 'FontSize', 20);
+ylabel('\langle x_{CM}(t) \rangle', 'FontSize', 20);
+set(gca, 'FontSize', 15);
+
+subplot(2,2,2); hold on;
+plot(NLSE.t, x_cm_all(1:50, :)', 'Color', [0.7 0.7 1]);
+plot(NLSE.t, mean(x_cm_all(1:50, :), 1), 'k', 'LineWidth', 2);
+title('s = 50', 'FontSize', 18);
+% xlabel('t', 'FontSize', 20);
+% ylabel('\langle x_{CM}(t) \rangle', 'FontSize', 20);
+set(gca, 'FontSize', 15);
+
+subplot(2,2,3); hold on;
+plot(NLSE.t, x_cm_all(1:100, :)', 'Color', [0.7 0.7 1]);
+plot(NLSE.t, mean(x_cm_all(1:100, :), 1), 'k', 'LineWidth', 2);
+title('s = 100', 'FontSize', 18);
+xlabel('t', 'FontSize', 20);
+ylabel('\langle x_{CM}(t) \rangle', 'FontSize', 20);
+set(gca, 'FontSize', 15);
+
+subplot(2,2,4); hold on;
+plot(NLSE.t, x_cm_all', 'Color', [0.7 0.7 1]);    % plot all samples (light blue)
+plot(NLSE.t, x_cm_mean, 'k', 'LineWidth', 2);     % mean trajectory (black)
+title('s = 200', 'FontSize', 18);
+xlabel('t', 'FontSize', 20);
+% ylabel('\langle x_{CM}(t) \rangle', 'FontSize', 20);
+set(gca, 'FontSize', 15);
+
+sgtitle('Ensemble center of mass mean trajectory', 'FontSize', 20);
+
+%%
+figure;
+
+% Create 2x2 tiled layout
+t = tiledlayout(2,2, 'TileSpacing', 'compact', 'Padding', 'compact'); 
+% 'TileSpacing' controls spacing between tiles
+% 'Padding' controls space around the edges
+
+ax1 = nexttile;
+hold on
+plot(NLSE.t, x_cm_all(1:10, :)', 'Color', [0.7 0.7 1]);
+plot(NLSE.t, mean(x_cm_all(1:10,:),1), 'k','LineWidth',2)
+title('s = 10', 'FontSize', 18);
+ylabel('\langle x_{CM}(t) \rangle', 'FontSize', 18);
+ax1.FontSize = 15;
+
+ax2 = nexttile;
+hold on
+plot(NLSE.t, x_cm_all(1:50, :)', 'Color', [0.7 0.7 1]);
+plot(NLSE.t, mean(x_cm_all(1:50,:),1), 'k','LineWidth',2)
+title('s = 50', 'FontSize', 18);
+ax2.FontSize = 15;
+
+ax3 = nexttile;
+hold on
+plot(NLSE.t, x_cm_all(1:100, :)', 'Color', [0.7 0.7 1]);
+plot(NLSE.t, mean(x_cm_all(1:100,:),1), 'k','LineWidth',2)
+title('s = 100', 'FontSize', 18);
+xlabel('t', 'FontSize', 18);
+ylabel('\langle x_{CM}(t) \rangle', 'FontSize', 18);
+ax3.FontSize = 15;
+
+ax4 = nexttile;
+hold on
+plot(NLSE.t, x_cm_all', 'Color', [0.7 0.7 1]);
+plot(NLSE.t, x_cm_mean, 'k','LineWidth',2)
+title('s = 200', 'FontSize', 18);
+xlabel('t', 'FontSize', 18);
+ax4.FontSize = 15;
+
+sgtitle('Ensemble center of mass mean trajectory', 'FontSize', 20);
+
+
+
+%% Simulate 1D NLSE
+function [NLSE_soln] = simulate_1D_NLSE(NLSE, NLSE_soln, BC_type)
+
+psi = NLSE_soln.X(:,1); 
+
+for i = 1:NLSE.Nt
+    
+    % Initial guess for Newton
+    psi_next = psi;
+
+    if strcmpi(BC_type, 'dirichlet')
+        t_n = NLSE.t(i);
+        [pL, pR, qL, qR] = BCfunction(t_n, NLSE.T);
+    end
+
+    % Sample additive noise (complex)
+    xi = randn(2*NLSE.N, 1); % independent for p and q parts
+    noise = NLSE.sigma * sqrt(NLSE.dt) * xi;
+
+    % Newton iteration
+    ci = 0;
+    err = 1;
+    
+    while err > 1e-13
+
+    % Force BCs at current iteration
+    if strcmpi(BC_type, 'dirichlet')
+        psi_next(1)   = pL;     % Set boundaries for psi_next
+        psi_next(N)   = pR;
+        psi_next(N+1) = qL;
+        psi_next(N+N) = qR;
+    end
+    
+    % [fvec, J] = NLSE_solve(psi_next, psi, dx, dt, gam, N);
+    [fvec, J] = NLSE_solve_BC(psi_next, psi, NLSE.dx, NLSE.dt, ...
+                        NLSE.gam, NLSE.N, BC_type);
+    % [fvec, J] = NLSE_solve_BC(psi_next, psi, dx, dt, gam, N, BC_type, pL, pR, qL, qR);
+
+    
+    % Include noise to residual (only to fvec, not to Jacobian)
+    fvec = fvec - noise;
+    
+    % Update Newton
+    psi_next = psi_next - (J \ fvec);
+    ci = ci + 1;
+    err = norm(fvec);
+    if ci == 10
+        err
+        err = 0.5e-14;
+    end
+
+    end
+
+    % Store solution
+    NLSE_soln.X(:,i+1) = psi_next;
+    psi = psi_next;
+end
+
+% %
+NLSE_soln.P   = NLSE_soln.X(1:NLSE.N, :);         % p snapshots
+NLSE_soln.Q   = NLSE_soln.X(NLSE.N+1:end, :);     % q snapshots
+NLSE_soln.Psi = abs(NLSE_soln.P + NLSE_soln.Q*1j);     % |psi| snapshots
+
+end
+
+
+%% Compute center of mass of the wave function
+
+function x_cm = compute_center_of_mass(Psi, x, dx)
+    % squared amplitude (mass/particle density)
+    rho = Psi.^2;            % |psi|^2 : size N x Nt+1
+    
+    % total mass over time: integral [rho(x,t)]dx = \sum_i^N [rho_i] * deltax
+    Mt = sum(rho, 1) * dx;
+
+    % integral [x * rho(x,t)] dx
+    xrho = x .* rho;
+    xrho_sum = sum(xrho, 1) * dx;
+
+    % centre of mass over time
+    x_cm = xrho_sum ./ Mt;
+end
+
 
 
 %% Function for defining the initial conditions for NLSE problem
@@ -161,6 +376,7 @@ for j = 1:N
 end
 y0=[p0; q0;];
 end
+
 
 %% Efficient Newton's iteration
 
