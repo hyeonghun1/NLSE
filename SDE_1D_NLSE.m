@@ -77,7 +77,8 @@ ylabel(colorbarHandle, '$|\psi|^2$', 'Interpreter','latex', 'FontSize',18);
 
 T       = 100;           % final time
 L       = 2*sqrt(2)*pi;  % domian length
-dx      = L/64;          % mesh width
+N       = 64;              % number of spatial points
+dx      = L/N;          % mesh width
 dt      = 0.005;         % time step
 x_grid  = -L/2:dx:L/2;   % grid points
 t       = 0:dt:T;        % time points
