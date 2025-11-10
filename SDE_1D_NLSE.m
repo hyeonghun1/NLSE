@@ -3,14 +3,14 @@ clc; clear;
 % such as explicit, implicit (backward or midpoint) Euler-Maruyama schemes.
 
 %% Explicit time stepping (Euler-Maruyama) 
-% This is unstable even for small time step, e.g., dt=0.001.
+% This is unstable even with a small time step, e.g., dt=0.001.
 
 % Parameters
 L   = 2*sqrt(2)*pi;    % domain length
 N   = 64;              % number of spatial points
 dx  = L/N;             
 x   = linspace(-L/2, L/2-dx, N)';  % spatial grid
-T   = 10;              % final time
+T   = 20;              % final time
 dt  = 0.001;           % time step
 Nt  = round(T/dt);     % number of timesteps
 t   = 0:dt:T;          % time
@@ -33,6 +33,9 @@ Dxx = spdiags([e -2*e e], -1:1, N, N)/dx^2;
 Dxx(1,N) = 1/dx^2; Dxx(N,1) = 1/dx^2;  % periodic BC
 
 rng('default');  % for reproducibility
+
+dW = zeros(2*N, Nt);
+
 p = p0;
 q = q0;
 for n = 1:Nt
@@ -46,6 +49,8 @@ for n = 1:Nt
     % Generate additive noise
     dW1 = sqrt(dt)*randn(N,1);
     dW2 = sqrt(dt)*randn(N,1);
+
+    dW(:, n) = [dW1; dW2;];
     
     % Explicit Euler-Maruyama update
     p = p - dt*(Lq + gam*pmq.*q) + sigma*dW1;
@@ -74,21 +79,22 @@ ylabel(colorbarHandle, '$|\psi|^2$', 'Interpreter','latex', 'FontSize',18);
 
 
 %% Implicit (Crank-Nicolson) + Newton's method
+clc; clear;
 
-T       = 100;           % final time
-L       = 2*sqrt(2)*pi;  % domian length
-N       = 64;              % number of spatial points
-dx      = L/N;          % mesh width
-dt      = 0.005;         % time step
-x_grid  = -L/2:dx:L/2;   % grid points
-t       = 0:dt:T;        % time points
-Nt      = T/dt;
-gam     = 2;
+T    = 200;           % final time
+L    = 2*sqrt(2)*pi;  % domian length
+N    = 64;              % number of spatial points
+dx   = L/N;          % mesh width
+dt   = 0.005;         % time step
+x    = linspace(-L/2, L/2, N);   % grid points
+t    = 0:dt:T;        % time points
+Nt   = T/dt;
+gam  = 2;
 
 X = zeros(2*N, Nt);
 
 % Initial conditions
-psi0 = init(x_grid, N, L);
+psi0 = init(x, N, L);
 psi = psi0;
 
 % IC snapshot
@@ -100,6 +106,10 @@ X(:,1) = psi;
 sigma = 0.01; 
 
 BC_type = 'periodic';   % periodic, dirichlet, neumann          
+
+dW_CN = zeros(2*N, Nt);
+rng('default');  % for reproducibility
+
 for i = 1:Nt
     
     % Initial guess for Newton
@@ -113,6 +123,8 @@ for i = 1:Nt
     % Sample additive noise (complex)
     xi = randn(2*N, 1); % independent for p and q parts
     noise = sigma * sqrt(dt) * xi;
+
+    dW_CN(:,i) = xi;
 
     % Newton iteration
     ci = 0;
@@ -160,7 +172,7 @@ Psi = abs(P + Q*1j);     % |psi| snapshots
 
 % % Plotting the solution and energy
 figure;
-surf(x_grid(2:end)', t', (Psi(1:N,:).^2)','LineStyle','none')
+surf(x', t', (Psi(1:N,:).^2)', 'LineStyle', 'none')
 title({'Stochastic 1D NLSE with additive noise', ...
        'implicit (CN) E-M Scheme'}, 'FontSize', 18);
 xlabel('$x$', Interpreter='latex', FontSize=20);
@@ -170,38 +182,227 @@ colormap jet;
 colorbarHandle = colorbar;
 ylabel(colorbarHandle, '$|\psi|^2$', 'Interpreter','latex', 'FontSize',18);
 
+
+[H_CN, M1_CN, M2_CN, H2_CN] = ener(Q, P, N, Nt, gam, dx);
+% H2 = enermat(Q, P, N, Nt, c, dx);
+
+figure;
+plot(t, H_CN, 'LineWidth', 2); hold on;
+plot(t, H_CN-H2_CN, 'LineWidth', 2, 'LineStyle', '-.');
+plot(t, H2_CN, 'LineWidth', 2, 'LineStyle', ':');
+xlabel('$t$', 'Interpreter', 'latex', 'FontSize', 20);
+ylabel('Energy', 'FontSize', 20);
+legend('Total energy', 'Kinetic only', 'Potential only', fontsize=16)
+set(gca, 'Fontsize', 12);
+
+figure;
+subplot(1,2,1); plot(t, M1_CN, 'LineWidth', 2);
+title('Mass invariant', fontsize=20);
+xlabel('t', 'FontSize', 20);
+set(gca, 'Fontsize', 20);
+subplot(1,2,2); plot(t, M2_CN, 'LineWidth', 2);
+title('Momentum invariant', fontsize=20);
+xlabel('t', 'FontSize', 20);
+set(gca, 'Fontsize', 20);
+
+
 %% Compute center-of-mass and its statistics for this run
 
 % squared amplitude (mass/particle density)
-rho = Psi.^2;        % |psi|^2 : size N x Nt+1
+rho_CN = Psi.^2;        % |psi|^2 : size N x Nt+1
 
 % total mass over time: integral [rho(x,t)]dx = \sum_i^N [rho_i] * deltax
-Mt = sum(rho, 1) * dx;
+Mt_CN = sum(rho_CN, 1) * dx;
 
 % integral [x * rho(x,t)] dx
-xrho = x .* rho;
-xrho_sum = sum(xrho, 1) * dx;
+xrho_CN = x' .* rho_CN;
+xrho_CN_sum = sum(xrho_CN, 1) * dx;
 
 % centre of mass over time
-x_cm = xrho_sum ./ Mt;
+x_cm_CN = xrho_CN_sum ./ Mt_CN;
 
 % display
-fprintf('Mean of center of mass: %g\n', mean(x_cm));
-fprintf('Variance of center of mass: %g\n', var(x_cm));
+fprintf('Mean of center of mass: %g\n', mean(x_cm_CN));
+fprintf('Variance of center of mass: %g\n', var(x_cm_CN));
 
 % plots
+% figure;
+% plot(t(1:size(x_cm_CN, 2)), x_cm_CN, 'LineWidth', 1.2);
+% xlabel('t', 'FontSize', 20); ylabel('x_{CM}(t)', 'FontSize', 20);
+% title('Center of mass over time', 'FontSize', 20);
+% ax = gca;
+% ax.FontSize = 15;
+
+% figure;
+% histogram(x_cm_CN, 40);
+% xlabel('x_{CM}', 'FontSize', 20); ylabel('count', 'FontSize', 20);
+% ax = gca; ax.FontSize = 15;
+% title('Histogram of center of mass over time', 'FontSize', 20);
+
+
+%% Fully implicit (backward Euler) + Newton's method
+% Treat both linear and nonlinear drift terms implicitly
+
+X = zeros(2*N, Nt);
+
+% Initial conditions
+psi0 = init(x, N, L);
+psi = psi0;
+
+% IC snapshot
+X(:,1) = psi;
+
+sigma = 0.01; % noise amplitude
+
+for i = 1:Nt
+    % Initial guess for Newton
+    psi_next = psi;
+
+    % Sample additive noise (complex)
+    % xi = randn(2*N, 1); % independent for p and q parts
+    
+    xi = dW_CN(:,i);
+    noise = sigma * sqrt(dt) * xi;
+
+    % Newton iteration
+    ci = 0;
+    err = 1;
+    
+    while err > 1e-15
+        [fvec, J] = NLSE_solve_fully_implicit(psi_next, psi, dx, dt, gam, N);
+        
+        % Include noise to residual (only to fvec)
+        fvec = fvec - noise;
+        
+        % Update Newton
+        psi_next = psi_next - (J \ fvec);
+        ci = ci + 1;
+        err = norm(fvec);
+        if ci == 10
+            err
+            err = 0.5e-16;
+        end
+    end
+
+    % Store solution
+    X(:,i+1) = psi_next;
+    psi = psi_next;
+end
+
+% %
+P   = X(1:N, :);         % p snapshots
+Q   = X(N+1:end, :);     % q snapshots
+Psi = abs(P + Q*1j);     % |psi| snapshots
+% 
+
+% % Plotting the solution and energy
 figure;
-plot(t(1:size(x_cm, 2)), x_cm, 'LineWidth', 1.2);
-xlabel('t', 'FontSize', 20); ylabel('x_{CM}(t)', 'FontSize', 20);
-title('Centre of mass over time', 'FontSize', 20);
-ax = gca;
-ax.FontSize = 15;
+surf(x', t', (Psi(1:N,:).^2)','LineStyle','none')
+title({'Stochastic 1D NLSE with additive noise', ...
+       'fully implicit E-M + Newtons method'}, 'FontSize', 18);
+xlabel('$x$', Interpreter='latex', FontSize=20);
+ylabel('$t$', Interpreter='latex', FontSize=20);
+zlabel('$|\psi|^2$', Interpreter='latex', FontSize=20);
+colormap jet;
+colorbarHandle = colorbar;
+ylabel(colorbarHandle, '$|\psi|^2$', 'Interpreter','latex', 'FontSize',18);
+
+
+% Energy
+[H_BE, M1_BE, M2_BE, H2_BE] = ener(Q, P, N, Nt, gam, dx);
 
 figure;
-histogram(x_cm, 40);
-xlabel('x_{CM}', 'FontSize', 20); ylabel('count', 'FontSize', 20);
-ax = gca; ax.FontSize = 15;
-title('Histogram of centre of mass over time', 'FontSize', 20);
+plot(t, H_BE, 'LineWidth', 2); hold on;
+plot(t, H_BE-H2_BE, 'LineWidth', 2, 'LineStyle', '-.');
+plot(t, H2_BE, 'LineWidth', 2, 'LineStyle', ':');
+xlabel('$t$', 'Interpreter', 'latex', 'FontSize', 20);
+ylabel('Energy', 'FontSize', 20);
+legend('Total energy', 'Kinetic only', 'Potential only', fontsize=16)
+set(gca, 'Fontsize', 12);
+
+figure;
+subplot(1,2,1); plot(t, M1_BE, 'LineWidth', 2);
+title('Mass invariant', fontsize=20);
+xlabel('t', 'FontSize', 20);
+set(gca, 'Fontsize', 20);
+subplot(1,2,2); plot(t, M2_BE, 'LineWidth', 2);
+title('Momentum invariant', fontsize=20);
+xlabel('t', 'FontSize', 20);
+set(gca, 'Fontsize', 20);
+
+%% Compare energies
+figure;
+plot(t, H_CN, 'LineWidth', 2); hold on;
+plot(t, H_CN-H2_CN, 'LineWidth', 2, 'LineStyle', '-.');
+plot(t, H2_CN, 'LineWidth', 2, 'LineStyle', ':');
+
+plot(t, H_BE, 'LineWidth', 2); hold on;
+plot(t, H_BE-H2_BE, 'LineWidth', 2, 'LineStyle', '-.');
+plot(t, H2_BE, 'LineWidth', 2, 'LineStyle', ':');
+
+xlabel('$t$', 'Interpreter', 'latex', 'FontSize', 20);
+ylabel('Energy', 'FontSize', 20);
+legend('H (Midpoint)', 'KE (Midpoint)', 'PE (Midpoint)', ...
+       'H (BE)', 'KE (BE)', 'PE (BE)',fontsize=16)
+set(gca, 'Fontsize', 12);
+
+figure;
+subplot(1,2,1); plot(t, M1_CN, 'LineWidth', 2); hold on
+plot(t, M1_BE, 'LineWidth', 2);
+title('Mass invariant', fontsize=20);
+xlabel('t', 'FontSize', 20);
+legend('Midpoint rule', 'Backward Euler', fontsize=20)
+set(gca, 'Fontsize', 20);
+
+subplot(1,2,2); plot(t, M2_CN, 'LineWidth', 2); hold on
+subplot(1,2,2); plot(t, M2_BE, 'LineWidth', 2);
+title('Momentum invariant', fontsize=20);
+xlabel('t', 'FontSize', 20);
+legend('Midpoint rule', 'Backward Euler', fontsize=20)
+set(gca, 'Fontsize', 20);
+
+
+%% squared amplitude (mass/particle density)
+rho_BE = Psi.^2;        % |psi|^2 : size N x Nt+1
+
+% total mass over time: integral [rho(x,t)]dx = \sum_i^N [rho_i] * deltax
+Mt_BE = sum(rho_BE, 1) * dx;
+
+% integral [x * rho(x,t)] dx
+xrho_BE = x' .* rho_BE;
+xrho_sum_BE = sum(xrho_BE, 1) * dx;
+
+% centre of mass over time
+x_cm_BE = xrho_sum_BE ./ Mt_BE;
+
+% display
+fprintf('Mean of center of mass: %g\n', mean(x_cm_BE));
+fprintf('Variance of center of mass: %g\n', var(x_cm_BE));
+
+% % plots
+% figure;
+% plot(t(1:size(x_cm_BE, 2)), x_cm_BE, 'LineWidth', 1.2);
+% xlabel('t', 'FontSize', 20); ylabel('x_{CM}(t)', 'FontSize', 20);
+% title('Centre of mass over time', 'FontSize', 20);
+% ax = gca;
+% ax.FontSize = 15;
+% 
+% figure;
+% histogram(x_cm_BE, 40);
+% xlabel('x_{CM}', 'FontSize', 20); ylabel('count', 'FontSize', 20);
+% ax = gca; ax.FontSize = 15;
+% title('Histogram of centre of mass over time', 'FontSize', 20);
+
+
+%% Compare center of mass
+figure;
+plot(t(1:size(x_cm_CN, 2)), x_cm_CN, 'LineWidth', 2); hold on;
+plot(t(1:size(x_cm_BE, 2)), x_cm_BE, 'LineStyle', '-.', 'LineWidth', 2);
+legend('Midpoint rule', 'Backward Euler');
+xlabel('t', 'FontSize', 20); ylabel('x_{CM}(t)', 'FontSize', 20);
+title('Center of mass over time', 'FontSize', 20);
+ax = gca;
+ax.FontSize = 15;
 
 
 %% Semi-implicit time stepping
@@ -294,146 +495,38 @@ view(2);   % view from top (optional, can remove for 3D view)
 colorbar;
 
 
-%% Fully implicit + Newton's method
-% Treat both linear and nonlinear drift terms implicitly
+%% Total energy H, mass invariant M1 and momentum invariant M2 
+function [H, M1, M2, H2] = ener(Q, P, N, Nt, gam, dx)
 
-T       = 100;           % final time
-L       = 2*sqrt(2)*pi;  % domian length
-N       = 64;            % number of spatial points
-dx      = L/N;           % mesh width
-dt      = 0.005;         % time step
-x_grid  = -L/2:dx:L/2;   % grid points
-t       = 0:dt:T;        % time points
-Nt      = T/dt;
-gam     = 2;
+H=zeros(Nt+1,1);
+H2=zeros(Nt+1,1);
+M1=zeros(Nt+1,1);
+M2=zeros(Nt+1,1);
 
-X = zeros(2*N, Nt);
-
-% Initial conditions
-psi0 = init(x_grid, N, L);
-psi = psi0;
-
-% IC snapshot
-X(:,1) = psi;
-
-sigma = 0.01; % noise amplitude
-
-for i = 1:Nt
-    % Initial guess for Newton
-    psi_next = psi;
-
-    % Sample additive noise (complex)
-    xi = randn(2*N, 1); % independent for p and q parts
-    noise = sigma * sqrt(dt) * xi;
-
-    % Newton iteration
-    ci = 0;
-    err = 1;
+for i=1:Nt+1
     
-    while err > 1e-13
-        [fvec, J] = NLSE_solve_fully_implicit(psi_next, psi, dx, dt, gam, N);
-        
-        % Include noise to residual (only to fvec)
-        fvec = fvec - noise;
-        
-        % Update Newton
-        psi_next = psi_next - (J \ fvec);
-        ci = ci + 1;
-        err = norm(fvec);
-        if ci == 10
-            err
-            err = 0.5e-14;
-        end
+    for j=1:N-1
+    H(i,1) = H(i,1) + 0.5*((P(j+1,i)-P(j,i))/dx)^2 + 0.5*((Q(j+1,i)-Q(j,i))/dx)^2 ...
+                    - 0.25*gam*((Q(j,i)^2 + P(j,i)^2)^2);
+    H2(i,1) = H2(i,1) - 0.25*gam*((Q(j,i)^2 + P(j,i)^2)^2);
+    M1(i,1) = M1(i,1) + 0.5*((P(j,i))^2) + 0.5*((Q(j,i))^2);
+    M2(i,1) = M2(i,1) + ( (P(j+1,i)-P(j,i)) * Q(j,i) ) -  ( (Q(j+1,i)-Q(j,i)) * P(j,i) );
     end
-
-    % Store solution
-    X(:,i+1) = psi_next;
-    psi = psi_next;
+    
+    % At the boundary
+    H(i,1) = H(i,1) + 0.5*((P(1,i)-P(N,i))/dx)^2 + 0.5*((Q(1,i)-Q(N,i))/dx)^2 ...
+                    - 0.25*gam*((Q(N,i)^2 + P(N,i)^2)^2);
+    H2(i,1) = H2(i,1) - 0.25*gam*((Q(N,i)^2 + P(N,i)^2)^2);
+    M1(i,1) = M1(i,1) + 0.5*((P(N,i))^2) + 0.5*((Q(N,i))^2);
+    M2(i,1) = M2(i,1) + ( (P(1,i)-P(N,i)) * Q(N,i) ) - ( (Q(1,i)-Q(N,i)) * P(N,i) );
+    
 end
 
-% %
-P   = X(1:N, :);         % p snapshots
-Q   = X(N+1:end, :);     % q snapshots
-Psi = abs(P + Q*1j);     % |psi| snapshots
-% 
+H=H*dx;
+H2=H2*dx;
+M1=M1*dx;
 
-% % Plotting the solution and energy
-figure;
-surf(x_grid(2:end)', t', (Psi(1:N,:).^2)','LineStyle','none')
-title({'Stochastic 1D NLSE with additive noise', ...
-       'fully implicit E-M + Newtons method'}, 'FontSize', 18);
-xlabel('$x$', Interpreter='latex', FontSize=20);
-ylabel('$t$', Interpreter='latex', FontSize=20);
-zlabel('$|\psi|^2$', Interpreter='latex', FontSize=20);
-colormap jet;
-colorbarHandle = colorbar;
-ylabel(colorbarHandle, '$|\psi|^2$', 'Interpreter','latex', 'FontSize',18);
-
-
-%%
-clc; clear all;
-
-% Parameters
-Nx   = 2^6;                   % spatial points
-Lx   = 2*sqrt(2)*pi;          % domain length
-dx   = Lx / Nx;               
-x    = linspace(-Lx/2, Lx/2-dx, Nx)'; % periodic grid
-
-T    = 0.1;                   % final time
-dt   = 0.001;                 
-Nt   = round(T/dt);
-
-kappa = 2.0;                  % NLSE nonlinearity
-sigma = 0.01;                 % additive noise amplitude
-
-% Initial condition
-A = 0.5;
-psi = A * (1 + 0.01*cos(2*pi*x/Lx));
-psi = psi + 1i*zeros(size(psi));
-
-% Storage
-X = zeros(Nx, Nt+1);
-X(:,1) = abs(psi).^2;
-
-% Laplacian (periodic)
-e = ones(Nx,1);
-Lop = spdiags([e -2*e e], [-1 0 1], Nx, Nx)/dx^2;
-Lop(1,end) = 1/dx^2;   % periodic BC
-Lop(end,1) = 1/dx^2;
-
-I = speye(Nx);
-
-% CN operator
-LHS = I - 1i*dt/2 * Lop;
-RHS_Laplace = I + 1i*dt/2 * Lop;
-
-% Time-stepping
-for n = 1:Nt
-    % Nonlinear term (explicit)
-    NL = 1i * kappa * dt * abs(psi).^2 .* psi;
-    
-    % Additive noise
-    xi = randn(Nx,1) + 1i*randn(Nx,1);
-    noise = sigma * sqrt(dt) * xi;
-    
-    % Right-hand side
-    RHS = RHS_Laplace * psi + NL + noise;
-    
-    % Solve implicit linear system
-    psi = LHS \ RHS;
-    
-    % Store
-    X(:,n+1) = abs(psi).^2;
 end
-
-% Plot surface
-figure;
-surf((0:Nx-1)*dx, (0:Nt)*dt, X', 'EdgeColor', 'none');
-xlabel('x'); ylabel('t'); zlabel('|psi|^2');
-title('Stochastic 1D NLSE (CN + additive noise)');
-colormap jet;
-view(2); colorbar;
-
 
 %%
 function [F, J] = NLSE_solve_fully_implicit(psi_next, psi, dx, dt, gam, N)

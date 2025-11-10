@@ -63,13 +63,29 @@ ylabel('$t$', Interpreter='latex', FontSize=20);
 zlabel('$|\psi|^2$', Interpreter='latex', FontSize=20);
 colormap jet; colorbar;
 
-% % %
-% [H, M1, M2, H2] = ener(Q, P, N, Nt, gam, dx);
+% % Hamiltonian, mass/momentum invariants
+[H, M1, M2, H2] = ener(Q, P, N, Nt, gam, dx);
 % H2 = enermat(Q, P, N, Nt, c, dx);
 
-% figure;
-% plot(t, H-H2);
+figure;
+plot(t, H, 'LineWidth', 2); hold on;
+plot(t, H-H2, 'LineWidth', 2, 'LineStyle', '-.');
+plot(t, H2, 'LineWidth', 2, 'LineStyle', ':');
+xlabel('$t$', 'Interpreter', 'latex', 'FontSize', 20);
+ylabel('Energy', 'FontSize', 20);
+legend('Total energy', 'Kinetic only', 'Potential only', fontsize=16)
+set(gca, 'Fontsize', 12);
 %
+
+figure;
+subplot(1,2,1); plot(t, M1, 'LineWidth', 2);
+title('Mass invariant', fontsize=20);
+xlabel('t', 'FontSize', 20);
+set(gca, 'Fontsize', 20);
+subplot(1,2,2); plot(t, M2, 'LineWidth', 2);
+title('Momentum invariant', fontsize=20);
+xlabel('t', 'FontSize', 20);
+set(gca, 'Fontsize', 20);
 
 %% Solve this same 1D NLSE using split-stepping (operator splitting)
 
@@ -224,6 +240,7 @@ end
 H=H*dx;
 H2=H2*dx;
 M1=M1*dx;
+
 end
 %% Function for solving the system of nonlinear equations
 % function [fvec, J] = NLSE_solve(y_next, y_now, dx, dt, gam, N)
